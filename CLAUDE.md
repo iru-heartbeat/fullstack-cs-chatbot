@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   git switch main && git merge --no-ff feature/<機能名>
   git worktree remove ../worktrees/<機能名> && git branch -d feature/<機能名>
   ```
-- worktree はリポジトリの外（`../worktrees/`）に置く。`.env.local` は git 管理外なので、新しい worktree ごとにコピーして `pnpm install` する。
+- worktree はリポジトリの外（`../worktrees/`）に置く。`.env.local` は git 管理外なので、新しい worktree ごとにコピーして `npm install` する。
 - 実装順序は計画どおり：db-schema-rls → operator-auth / widget-basic（並行）→ realtime-messaging → ai-reply → category-classification → escalation → operator-conversation-list → operator-reply → business-hours-queue → faq-management → hardening → acceptance-deploy。各機能の完了条件は計画書（`~/.claude/plans/1-worktree-foamy-lark.md`）を参照。
 
 ## 機能実装後の解説ルール（必須）
@@ -29,7 +29,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 計画しているアーキテクチャ
 
-pnpm モノレポ。
+npm workspaces モノレポ。
 - `apps/admin`：Next.js（Vercel）。オペレーター管理画面と、**サーバー側 API**（Claude API 呼び出し、営業時間判定）。
 - `packages/widget`：顧客サイトに埋め込む React チャットウィジェット。
 - `supabase/migrations`：スキーマと RLS（Supabase はクラウドの開発用プロジェクト1つを全 worktree で共有。ローカル Supabase は使わない）。
@@ -47,4 +47,14 @@ pnpm モノレポ。
 
 ## コマンド
 
-pnpm を使う予定（雛形作成後に実際のスクリプト名で更新すること）。完了確認として各マージ前に `pnpm build` と `pnpm lint` を通す。
+パッケージ管理は **npm workspaces**（pnpm は使わない）。ルートで実行する。
+
+```bash
+npm install                 # 全ワークスペースの依存をインストール
+npm run dev                 # 管理画面（apps/admin）を起動
+npm run build               # 全ワークスペースをビルド（widget は tsc --noEmit）
+npm run lint                # 全ワークスペースで lint
+npm run build -w apps/admin # 特定ワークスペースのみ
+```
+
+環境変数は `.env.example` を `apps/admin/.env.local` にコピーして値を入れる。各マージ前に `npm run build` と `npm run lint` を通す。
