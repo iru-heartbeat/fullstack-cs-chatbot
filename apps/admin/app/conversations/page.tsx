@@ -1,10 +1,9 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { ConversationList, type ListRow } from "./ConversationList";
 import {
   FILTERS,
-  STATUS_LABEL,
-  formatDateTime,
   isStatus,
   type ConversationStatus,
 } from "@/lib/conversations";
@@ -29,11 +28,16 @@ async function List({ searchParams }: { searchParams: SearchParams }) {
 
   const { data: conversations, error } = await query;
   if (error) return <p role="alert">会話の取得に失敗しました。</p>;
-  if (!conversations?.length) return <p>該当する会話はありません。</p>;
+
+  // 未対応件数（O-04）。絞り込みや 100 件の上限に関係なく全体を数える
+  const { count: unhandled } = await supabase
+    .from("conversations")
+    .select("id", { count: "exact", head: true })
+    .in("status", ["escalated", "queued"]);
 
   // 最終メッセージ：会話ごとに最新の1件を取得（RLS によりオペレーターは全件読める）
-  const lasts = await Promise.all(
-    conversations.map(async (c) => {
+  const rows: ListRow[] = await Promise.all(
+    (conversations ?? []).map(async (c) => {
       const { data } = await supabase
         .from("messages")
         .select("body")
@@ -41,36 +45,11 @@ async function List({ searchParams }: { searchParams: SearchParams }) {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      return data?.body ?? "";
+      return { ...c, status: c.status as ConversationStatus, last: data?.body ?? "" };
     }),
   );
 
-  return (
-    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-      <thead>
-        <tr style={{ textAlign: "left", borderBottom: "1px solid #ccc" }}>
-          <th>ステータス</th>
-          <th>カテゴリ</th>
-          <th>最終メッセージ</th>
-          <th>{status === "queued" ? "受付時刻" : "最終更新"}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {conversations.map((c, i) => (
-          <tr key={c.id} style={{ borderBottom: "1px solid #eee" }}>
-            <td>
-              <Link href={`/conversations/${c.id}`}>
-                {STATUS_LABEL[c.status as ConversationStatus]}
-              </Link>
-            </td>
-            <td>{c.category ?? "未分類"}</td>
-            <td>{lasts[i].length > 40 ? lasts[i].slice(0, 40) + "…" : lasts[i]}</td>
-            <td>{formatDateTime(status === "queued" ? c.created_at : c.updated_at)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+  return <ConversationList key={status ?? "all"} initialRows={rows} initialUnhandled={unhandled ?? 0} status={status} />;
 }
 
 export default function ConversationsPage({ searchParams }: { searchParams: SearchParams }) {

@@ -17,6 +17,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@cs-chatbot/shared": "*",
     "@supabase/supabase-js": "^2.118.0"
   }
 }

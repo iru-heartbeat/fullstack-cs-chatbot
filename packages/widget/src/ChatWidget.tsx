@@ -4,11 +4,13 @@ import {
   createWidgetClient,
   ensureAnonymousSession,
   fetchBusinessStatus,
+  isConversationActive,
   loadLatestConversation,
   requestAiReply,
   requestHumanSupport,
   sendCustomerMessage,
 } from "./session";
+import { subscribeToConversations, subscribeToMessages } from "@cs-chatbot/shared";
 import type { ChatMessage, SenderType } from "./types";
 
 export interface ChatWidgetProps {
@@ -52,6 +54,11 @@ const styles: Record<string, CSSProperties> = {
   human: { border: "none", borderTop: "1px solid #e5e7eb", background: "#fff", color: BRAND, padding: "8px", cursor: "pointer", font: "inherit", fontSize: 12 },
   error: { color: "#b91c1c", fontSize: 12, padding: "0 12px 8px" },
 };
+
+// 同じ id のメッセージは1回だけ追加する（API の戻り値と Realtime 経由の行が重なるため）
+function appendUnique(prev: ChatMessage[], m: ChatMessage): ChatMessage[] {
+  return prev.some((x) => x.id === m.id) ? prev : [...prev, m];
+}
 
 function Bubble({ m }: { m: ChatMessage }) {
   const mine = m.sender_type === "customer";
@@ -132,6 +139,38 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
     return () => { cancelled = true; };
   }, [open, apiBaseUrl]);
 
+  // O-07 / W-04: 担当者の返信などを Realtime で即時表示。id で重複排除（自分の送信分と二重にしない）
+  useEffect(() => {
+    if (!conversationId) return;
+    return subscribeToMessages(client, conversationId, (m) => {
+      setMessages((prev) => appendUnique(prev, m));
+      if (m.sender_type === "operator") setEscalated(true);
+    });
+  }, [client, conversationId]);
+
+  // 担当者が会話を完了にしたら、画面にお知らせを出し、次の送信は新しい相談として始める
+  useEffect(() => {
+    if (!conversationId) return;
+    return subscribeToConversations(
+      client,
+      (_event, c) => {
+        if (c.status !== "closed" && c.status !== "resolved_by_ai") return;
+        setMessages((prev) =>
+          appendUnique(prev, {
+            id: `local-closed-${c.id}`,
+            conversation_id: c.id,
+            sender_type: "system",
+            body: "この相談は完了しました。続けてご質問の場合は、新しい相談としてお送りください。",
+            created_at: new Date().toISOString(),
+          }),
+        );
+        setConversationId(null);
+        setEscalated(false);
+      },
+      conversationId,
+    );
+  }, [client, conversationId]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, open]);
@@ -143,18 +182,26 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
     setSending(true);
     setError(null);
     try {
-      const cid = conversationId ?? (await createConversation(client, customerId));
+      // 通知を取りこぼしても閉じた会話に書き込まないよう、送信前に状態を確認する
+      let activeId = conversationId;
+      let handledByHuman = escalated;
+      if (activeId && !(await isConversationActive(client, activeId))) {
+        activeId = null;
+        handledByHuman = false;
+        setEscalated(false);
+      }
+      const cid = activeId ?? (await createConversation(client, customerId));
       setConversationId(cid);
       const sent = await sendCustomerMessage(client, cid, body);
-      setMessages((prev) => [...prev, sent]);
+      setMessages((prev) => appendUnique(prev, sent));
       setText("");
       setSending(false);
-      if (escalated) return; // 担当者対応中は AI を呼ばない
+      if (handledByHuman) return; // 担当者対応中は AI を呼ばない
       // AI 返信を依頼（失敗時はサーバーがお詫びを保存するが、通信自体の失敗は画面に出す）
       setAiTyping(true);
       try {
         const { message, escalate } = await requestAiReply(client, apiBaseUrl, cid);
-        if (message) setMessages((prev) => [...prev, message]);
+        if (message) setMessages((prev) => appendUnique(prev, message));
         if (escalate) setEscalated(true);
       } catch {
         setError("AI の応答を取得できませんでした。時間をおいて再度お試しください。");
@@ -174,7 +221,7 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
     setError(null);
     try {
       const notice = await requestHumanSupport(client, apiBaseUrl, conversationId);
-      if (notice) setMessages((prev) => [...prev, notice]);
+      if (notice) setMessages((prev) => appendUnique(prev, notice));
       setEscalated(true);
     } catch {
       setError("担当者への切り替えに失敗しました。もう一度お試しください。");
