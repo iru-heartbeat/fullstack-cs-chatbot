@@ -208,8 +208,14 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
       } finally {
         setAiTyping(false);
       }
-    } catch {
-      setError("送信に失敗しました。もう一度お試しください。");
+    } catch (e) {
+      // DB のトリガーが連投を拒否したとき（1 分 10 メッセージまで）
+      const limited = typeof e === "object" && e !== null && "message" in e && String(e.message).includes("rate_limit");
+      setError(
+        limited
+          ? "メッセージの送信が多すぎます。少し待ってからもう一度お試しください。"
+          : "送信に失敗しました。もう一度お試しください。",
+      );
     } finally {
       setSending(false);
     }
