@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { CATEGORIES, type Category } from "./categories";
+import { CATEGORIES, type Category } from "./categories.ts";
 
 export type Faq = { id: string; category: string | null; question: string; answer: string };
 export type HistoryItem = { role: "user" | "assistant"; content: string };
