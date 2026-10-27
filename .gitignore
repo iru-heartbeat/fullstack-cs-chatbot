@@ -8,3 +8,4 @@ dist/
 # ナレッジ・テスト用の CSV（手元の取り込み用。リポジトリには含めない）
 case4-*.csv
 .claude/worktrees/
+.vercel
