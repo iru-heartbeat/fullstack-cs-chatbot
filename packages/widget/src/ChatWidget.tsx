@@ -3,6 +3,7 @@ import {
   createConversation,
   createWidgetClient,
   ensureAnonymousSession,
+  fetchBusinessStatus,
   loadLatestConversation,
   requestAiReply,
   requestHumanSupport,
@@ -86,6 +87,8 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
   // true の間は AI ではなく担当者の対応待ち（ai_handling 以外の会話）
   const [escalated, setEscalated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // W-08: サーバー判定の営業状況（取得できない間は null で案内なし）
+  const [afterHoursNotice, setAfterHoursNotice] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // 初回オープン時に匿名セッションを確立し、過去の会話を復元（W-09）
@@ -109,6 +112,25 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
     })();
     return () => { cancelled = true; };
   }, [open, customerId, client]);
+
+  // 窓を開くたびに営業状況を取得する（開きっぱなしで営業時間をまたいでも次回開閉で更新）
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetchBusinessStatus(apiBaseUrl).then((s) => {
+      if (cancelled || !s) return;
+      if (s.isOpen) return setAfterHoursNotice(null);
+      const next = s.nextOpenAt
+        ? new Date(s.nextOpenAt).toLocaleString("ja-JP", {
+            timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", weekday: "short", hour: "numeric", minute: "2-digit",
+          })
+        : null;
+      setAfterHoursNotice(
+        `現在は営業時間外です。AI のみの対応となり、担当者の回答は翌営業日になります${next ? `（次の営業開始: ${next}）` : ""}。`,
+      );
+    });
+    return () => { cancelled = true; };
+  }, [open, apiBaseUrl]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -170,6 +192,7 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
           <div style={styles.notice}>
             AI がご質問にお答えします。個人情報（氏名・住所・カード番号など）は入力しないでください。
           </div>
+          {afterHoursNotice && <div style={styles.notice} role="status">{afterHoursNotice}</div>}
           <div style={styles.list}>
             {messages.length === 0 && customerId && (
               <div style={{ color: "#6b7280", textAlign: "center", marginTop: 16 }}>

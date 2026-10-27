@@ -35,6 +35,7 @@ export async function proxy(request: NextRequest) {
   return response;
 }
 
+// 顧客向け API（Bearer 認証または認証不要）は、ルート名が完全一致するものだけログイン確認から除外する
 export const config = {
-  matcher: ["/((?!api/ai-reply|_next/static|_next/image|favicon.ico|.*\.(?:svg|png|ico)$).*)"],
+  matcher: ["/((?!api/(?:ai-reply|escalate|business-hours)(?:/|$)|_next/static|_next/image|favicon.ico|.*\.(?:svg|png|ico)$).*)"],
 };
