@@ -49,6 +49,14 @@ export async function fetchMessages(
   return (data ?? []) as Message[]
 }
 
+// removeChannel は非同期なので、同名チャンネルを即座に再購読すると解除前の古いチャンネルと衝突する。
+// 呼び出しごとに一意な名前にして避ける（再マウントや React Strict Mode 対策）
+let channelSeq = 0
+function uniqueChannelName(base: string): string {
+  channelSeq += 1
+  return `${base}:${channelSeq}`
+}
+
 /**
  * 1つの会話の新着メッセージを購読する。戻り値の関数を呼ぶと購読解除。
  * 配信は RLS で絞られる（顧客は自分の会話のみ）。
@@ -59,7 +67,7 @@ export function subscribeToMessages(
   onInsert: (message: Message) => void,
 ): () => void {
   const channel: RealtimeChannel = supabase
-    .channel(`messages:${conversationId}`)
+    .channel(uniqueChannelName(`messages:${conversationId}`))
     .on(
       'postgres_changes',
       {
@@ -87,7 +95,7 @@ export function subscribeToConversations(
   conversationId?: string,
 ): () => void {
   const channel: RealtimeChannel = supabase
-    .channel(conversationId ? `conversation:${conversationId}` : 'conversations:all')
+    .channel(uniqueChannelName(conversationId ? `conversation:${conversationId}` : 'conversations:all'))
     .on(
       'postgres_changes',
       {
