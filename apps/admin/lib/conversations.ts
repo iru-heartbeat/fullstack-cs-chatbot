@@ -35,7 +35,7 @@ export const SENDER_LABEL: Record<string, string> = {
 };
 
 export function isStatus(v: string | undefined): v is ConversationStatus {
-  return !!v && v in STATUS_LABEL;
+  return !!v && Object.hasOwn(STATUS_LABEL, v);
 }
 
 export function formatDateTime(iso: string): string {

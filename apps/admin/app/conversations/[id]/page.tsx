@@ -13,18 +13,23 @@ async function Detail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: conv } = await supabase
+  const { data: conv, error: convError } = await supabase
     .from("conversations")
     .select("id, status, category, created_at")
     .eq("id", id)
     .maybeSingle();
-  if (!conv) notFound(); // 存在しない ID や UUID 形式でない値もここへ
+  // 22P02 = UUID 形式でない ID。それ以外の失敗は 404 にせずエラー表示する
+  if (convError && convError.code !== "22P02") {
+    return <p role="alert">会話の取得に失敗しました。</p>;
+  }
+  if (!conv) notFound();
 
-  const { data: messages } = await supabase
+  const { data: messages, error: msgError } = await supabase
     .from("messages")
     .select("id, sender_type, body, created_at")
     .eq("conversation_id", id)
     .order("created_at", { ascending: true });
+  if (msgError) return <p role="alert">メッセージの取得に失敗しました。</p>;
 
   return (
     <>
