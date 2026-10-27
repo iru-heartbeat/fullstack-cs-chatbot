@@ -17,13 +17,15 @@ export async function ensureAnonymousSession(client: SupabaseClient): Promise<st
   return signedIn.user.id;
 }
 
-// 自分の最新の会話とそのメッセージを取得（RLS により自分の会話しか返らない）
+// 自分の最新の「進行中の」会話とそのメッセージを取得（RLS により自分の会話しか返らない）
+// 完了・AI 解決済みの会話は再開しない（書き込んでも誰にも届かないため。新しい会話を作る）
 export async function loadLatestConversation(
   client: SupabaseClient,
 ): Promise<{ conversationId: string; messages: ChatMessage[] } | null> {
   const { data: conv, error } = await client
     .from("conversations")
     .select("id")
+    .not("status", "in", "(closed,resolved_by_ai)")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
