@@ -1,59 +1,30 @@
-import { createClient } from "@supabase/supabase-js";
+import { authenticateCustomer, json, preflight } from "@/lib/api/customer";
+import { escalateConversation } from "@/lib/escalation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { generateReply, type HistoryItem } from "@/lib/ai/reply";
-
-// ウィジェットは顧客サイトに埋め込まれ別オリジンから呼ぶため CORS を許可する。
-// 認証は Cookie ではなく Bearer トークンなので、Origin 全許可でも他人の会話は触れない。
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Authorization, Content-Type",
-};
 
 const HISTORY_LIMIT = 10; // A-05
 
 const APOLOGY = "申し訳ございません。ただいまAIが回答できないため、担当者におつなぎします。";
 const HANDOFF = "こちらの内容は担当者が確認してご案内します。しばらくお待ちください。";
 
-function json(body: unknown, status = 200) {
-  return Response.json(body, { status, headers: CORS });
-}
-
 export function OPTIONS() {
-  return new Response(null, { status: 204, headers: CORS });
+  return preflight();
 }
 
 export async function POST(request: Request) {
-  const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  const body = await request.json().catch(() => null);
-  const conversationId = typeof body?.conversationId === "string" ? body.conversationId : null;
-  if (!token || !conversationId) return json({ error: "bad_request" }, 400);
-
-  // 1) 呼び出し元の顧客として会話を読めるか確認（RLS により他人の会話は見えない）
-  const asCustomer = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false, autoRefreshToken: false },
-    },
-  );
-  const { data: conv } = await asCustomer
-    .from("conversations")
-    .select("id, status, category")
-    .eq("id", conversationId)
-    .maybeSingle();
-  if (!conv) return json({ error: "not_found" }, 404);
+  const conv = await authenticateCustomer(request);
+  if (conv instanceof Response) return conv;
   if (conv.status !== "ai_handling") return json({ skipped: true, escalate: false });
 
-  // 2) 以降は service role（サーバー側のみ）で FAQ と履歴を読み、返信を書き込む
+  // 以降は service role（サーバー側のみ）で FAQ と履歴を読み、返信を書き込む
   const admin = createAdminClient();
   const [{ data: faqs }, { data: recent }] = await Promise.all([
     admin.from("faq").select("id, category, question, answer").eq("is_active", true),
     admin
       .from("messages")
       .select("sender_type, body")
-      .eq("conversation_id", conversationId)
+      .eq("conversation_id", conv.id)
       .order("created_at", { ascending: false })
       .limit(HISTORY_LIMIT),
   ]);
@@ -80,7 +51,7 @@ export async function POST(request: Request) {
 
   const { data: message, error } = await admin
     .from("messages")
-    .insert({ conversation_id: conversationId, ...row })
+    .insert({ conversation_id: conv.id, ...row })
     .select("id, conversation_id, sender_type, body, created_at")
     .single();
   if (error) {
@@ -93,11 +64,13 @@ export async function POST(request: Request) {
     const { error: catError } = await admin
       .from("conversations")
       .update({ category: reply.category })
-      .eq("id", conversationId)
+      .eq("id", conv.id)
       .is("category", null);
     if (catError) console.error("[ai-reply] category update failed", catError.message);
   }
 
-  // 会話ステータスの変更（escalated / queued）は escalation 機能で行う。ここでは判定だけ返す
-  return json({ message, escalate: reply.kind === "escalate" });
+  // A-03, A-09, A-10: 回答不可・危険トピック・API 障害はエスカレーション（ステータスを escalated に）
+  const escalate = reply.kind === "escalate";
+  if (escalate) await escalateConversation(admin, conv.id);
+  return json({ message, escalate });
 }

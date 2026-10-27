@@ -1,0 +1,27 @@
+import { authenticateCustomer, json, preflight } from "@/lib/api/customer";
+import { escalateConversation } from "@/lib/escalation";
+import { createAdminClient } from "@/lib/supabase/admin";
+
+const NOTICE = "担当者におつなぎします。しばらくお待ちください。";
+
+export function OPTIONS() {
+  return preflight();
+}
+
+// W-07: 顧客自身が「人間対応」を依頼する
+export async function POST(request: Request) {
+  const conv = await authenticateCustomer(request);
+  if (conv instanceof Response) return conv;
+  if (conv.status !== "ai_handling") return json({ skipped: true, message: null });
+
+  const admin = createAdminClient();
+  if (!(await escalateConversation(admin, conv.id))) return json({ skipped: true, message: null });
+
+  const { data: message, error } = await admin
+    .from("messages")
+    .insert({ conversation_id: conv.id, sender_type: "system", body: NOTICE })
+    .select("id, conversation_id, sender_type, body, created_at")
+    .single();
+  if (error) console.error("[escalate] notice insert failed", error.message);
+  return json({ message: message ?? null });
+}
