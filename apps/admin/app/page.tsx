@@ -18,6 +18,7 @@ export default function Home() {
         <Operator />
       </Suspense>
       <p><Link href="/conversations">会話一覧へ</Link></p>
+      <p><Link href="/faq">FAQ 管理へ</Link></p>
       <form action={logout}>
         <button type="submit">ログアウト</button>
       </form>
