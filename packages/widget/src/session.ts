@@ -103,3 +103,14 @@ export async function requestHumanSupport(
   const json = (await res.json()) as { message?: ChatMessage | null };
   return json.message ?? null;
 }
+
+// 完了（closed）や AI 解決済みの会話には書き込まない。送信前に最新の状態を確認する。
+export async function isConversationActive(client: SupabaseClient, conversationId: string): Promise<boolean> {
+  const { data, error } = await client
+    .from("conversations")
+    .select("status")
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (error) throw error;
+  return !!data && data.status !== "closed" && data.status !== "resolved_by_ai";
+}

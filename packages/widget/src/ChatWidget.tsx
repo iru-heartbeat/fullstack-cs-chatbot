@@ -3,12 +3,13 @@ import {
   createConversation,
   createWidgetClient,
   ensureAnonymousSession,
+  isConversationActive,
   loadLatestConversation,
   requestAiReply,
   requestHumanSupport,
   sendCustomerMessage,
 } from "./session";
-import { subscribeToMessages } from "@cs-chatbot/shared";
+import { subscribeToConversations, subscribeToMessages } from "@cs-chatbot/shared";
 import type { ChatMessage, SenderType } from "./types";
 
 export interface ChatWidgetProps {
@@ -125,6 +126,29 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
     });
   }, [client, conversationId]);
 
+  // 担当者が会話を完了にしたら、画面にお知らせを出し、次の送信は新しい相談として始める
+  useEffect(() => {
+    if (!conversationId) return;
+    return subscribeToConversations(
+      client,
+      (_event, c) => {
+        if (c.status !== "closed" && c.status !== "resolved_by_ai") return;
+        setMessages((prev) =>
+          appendUnique(prev, {
+            id: `local-closed-${c.id}`,
+            conversation_id: c.id,
+            sender_type: "system",
+            body: "この相談は完了しました。続けてご質問の場合は、新しい相談としてお送りください。",
+            created_at: new Date().toISOString(),
+          }),
+        );
+        setConversationId(null);
+        setEscalated(false);
+      },
+      conversationId,
+    );
+  }, [client, conversationId]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, open]);
@@ -136,13 +160,21 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
     setSending(true);
     setError(null);
     try {
-      const cid = conversationId ?? (await createConversation(client, customerId));
+      // 通知を取りこぼしても閉じた会話に書き込まないよう、送信前に状態を確認する
+      let activeId = conversationId;
+      let handledByHuman = escalated;
+      if (activeId && !(await isConversationActive(client, activeId))) {
+        activeId = null;
+        handledByHuman = false;
+        setEscalated(false);
+      }
+      const cid = activeId ?? (await createConversation(client, customerId));
       setConversationId(cid);
       const sent = await sendCustomerMessage(client, cid, body);
       setMessages((prev) => appendUnique(prev, sent));
       setText("");
       setSending(false);
-      if (escalated) return; // 担当者対応中は AI を呼ばない
+      if (handledByHuman) return; // 担当者対応中は AI を呼ばない
       // AI 返信を依頼（失敗時はサーバーがお詫びを保存するが、通信自体の失敗は画面に出す）
       setAiTyping(true);
       try {
