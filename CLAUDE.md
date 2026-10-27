@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 現状
 
-模擬案件「フルスタック CS チャットボット」。リポジトリにはまだ [要件定義書.md](要件定義書.md) しかなく、コードは未実装。要件 ID（W-xx ウィジェット / A-xx AI / O-xx オペレーター / F-xx FAQ / H-xx 営業時間）はこの文書が正。実装時はコミットメッセージに該当 ID を書く。ドキュメントと UI の言語は日本語。
+模擬案件「フルスタック CS チャットボット」。全機能の実装は完了（受け入れ結果は [docs/受け入れ確認.md](docs/受け入れ確認.md)、公開手順は [docs/デプロイ手順.md](docs/デプロイ手順.md)）。全体像は [README.md](README.md)。要件 ID（W-xx ウィジェット / A-xx AI / O-xx オペレーター / F-xx FAQ / H-xx 営業時間）は [要件定義書.md](要件定義書.md) が正。実装時はコミットメッセージに該当 ID を書く。ドキュメントと UI の言語は日本語。
 
 ## 開発の進め方（必須ルール）
 
