@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { logout } from "./login/actions";
 
@@ -16,6 +17,7 @@ export default function Home() {
       <Suspense fallback={<p>読み込み中…</p>}>
         <Operator />
       </Suspense>
+      <p><Link href="/conversations">会話一覧へ</Link></p>
       <form action={logout}>
         <button type="submit">ログアウト</button>
       </form>
