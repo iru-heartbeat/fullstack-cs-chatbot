@@ -8,6 +8,7 @@ import {
   requestHumanSupport,
   sendCustomerMessage,
 } from "./session";
+import { subscribeToMessages } from "@cs-chatbot/shared";
 import type { ChatMessage, SenderType } from "./types";
 
 export interface ChatWidgetProps {
@@ -51,6 +52,11 @@ const styles: Record<string, CSSProperties> = {
   human: { border: "none", borderTop: "1px solid #e5e7eb", background: "#fff", color: BRAND, padding: "8px", cursor: "pointer", font: "inherit", fontSize: 12 },
   error: { color: "#b91c1c", fontSize: 12, padding: "0 12px 8px" },
 };
+
+// 同じ id のメッセージは1回だけ追加する（API の戻り値と Realtime 経由の行が重なるため）
+function appendUnique(prev: ChatMessage[], m: ChatMessage): ChatMessage[] {
+  return prev.some((x) => x.id === m.id) ? prev : [...prev, m];
+}
 
 function Bubble({ m }: { m: ChatMessage }) {
   const mine = m.sender_type === "customer";
@@ -110,6 +116,15 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
     return () => { cancelled = true; };
   }, [open, customerId, client]);
 
+  // O-07 / W-04: 担当者の返信などを Realtime で即時表示。id で重複排除（自分の送信分と二重にしない）
+  useEffect(() => {
+    if (!conversationId) return;
+    return subscribeToMessages(client, conversationId, (m) => {
+      setMessages((prev) => appendUnique(prev, m));
+      if (m.sender_type === "operator") setEscalated(true);
+    });
+  }, [client, conversationId]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, open]);
@@ -124,7 +139,7 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
       const cid = conversationId ?? (await createConversation(client, customerId));
       setConversationId(cid);
       const sent = await sendCustomerMessage(client, cid, body);
-      setMessages((prev) => [...prev, sent]);
+      setMessages((prev) => appendUnique(prev, sent));
       setText("");
       setSending(false);
       if (escalated) return; // 担当者対応中は AI を呼ばない
@@ -132,7 +147,7 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
       setAiTyping(true);
       try {
         const { message, escalate } = await requestAiReply(client, apiBaseUrl, cid);
-        if (message) setMessages((prev) => [...prev, message]);
+        if (message) setMessages((prev) => appendUnique(prev, message));
         if (escalate) setEscalated(true);
       } catch {
         setError("AI の応答を取得できませんでした。時間をおいて再度お試しください。");
@@ -152,7 +167,7 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
     setError(null);
     try {
       const notice = await requestHumanSupport(client, apiBaseUrl, conversationId);
-      if (notice) setMessages((prev) => [...prev, notice]);
+      if (notice) setMessages((prev) => appendUnique(prev, notice));
       setEscalated(true);
     } catch {
       setError("担当者への切り替えに失敗しました。もう一度お試しください。");
