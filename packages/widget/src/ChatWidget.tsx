@@ -5,6 +5,7 @@ import {
   ensureAnonymousSession,
   loadLatestConversation,
   requestAiReply,
+  requestHumanSupport,
   sendCustomerMessage,
 } from "./session";
 import type { ChatMessage, SenderType } from "./types";
@@ -47,6 +48,7 @@ const styles: Record<string, CSSProperties> = {
   form: { display: "flex", gap: 8, padding: 10, borderTop: "1px solid #e5e7eb", background: "#fff" },
   input: { flex: 1, resize: "none", border: "1px solid #d1d5db", borderRadius: 8, padding: 8, font: "inherit" },
   send: { border: "none", background: BRAND, color: "#fff", borderRadius: 8, padding: "0 14px", cursor: "pointer", font: "inherit" },
+  human: { border: "none", borderTop: "1px solid #e5e7eb", background: "#fff", color: BRAND, padding: "8px", cursor: "pointer", font: "inherit", fontSize: 12 },
   error: { color: "#b91c1c", fontSize: 12, padding: "0 12px 8px" },
 };
 
@@ -81,6 +83,8 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [aiTyping, setAiTyping] = useState(false); // W-05
+  // true の間は AI ではなく担当者の対応待ち（ai_handling 以外の会話）
+  const [escalated, setEscalated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -96,6 +100,7 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
         setCustomerId(uid);
         if (latest) {
           setConversationId(latest.conversationId);
+          setEscalated(latest.status !== "ai_handling");
           setMessages(latest.messages);
         }
       } catch {
@@ -122,11 +127,13 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
       setMessages((prev) => [...prev, sent]);
       setText("");
       setSending(false);
+      if (escalated) return; // 担当者対応中は AI を呼ばない
       // AI 返信を依頼（失敗時はサーバーがお詫びを保存するが、通信自体の失敗は画面に出す）
       setAiTyping(true);
       try {
-        const { message } = await requestAiReply(client, apiBaseUrl, cid);
+        const { message, escalate } = await requestAiReply(client, apiBaseUrl, cid);
         if (message) setMessages((prev) => [...prev, message]);
+        if (escalate) setEscalated(true);
       } catch {
         setError("AI の応答を取得できませんでした。時間をおいて再度お試しください。");
       } finally {
@@ -137,7 +144,20 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
     } finally {
       setSending(false);
     }
-  }, [text, sending, customerId, conversationId, client, apiBaseUrl]);
+  }, [text, sending, customerId, conversationId, escalated, client, apiBaseUrl]);
+
+  // W-07: 人間対応を依頼
+  const callHuman = useCallback(async () => {
+    if (!conversationId || escalated || aiTyping) return;
+    setError(null);
+    try {
+      const notice = await requestHumanSupport(client, apiBaseUrl, conversationId);
+      if (notice) setMessages((prev) => [...prev, notice]);
+      setEscalated(true);
+    } catch {
+      setError("担当者への切り替えに失敗しました。もう一度お試しください。");
+    }
+  }, [conversationId, escalated, aiTyping, client, apiBaseUrl]);
 
   const disabled = !customerId || sending || aiTyping || !text.trim();
 
@@ -163,6 +183,15 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWid
             <div ref={bottomRef} />
           </div>
           {error && <div style={styles.error} role="alert">{error}</div>}
+          {escalated ? (
+            <div style={styles.notice}>担当者の対応をお待ちください。</div>
+          ) : (
+            conversationId && (
+              <button type="button" style={styles.human} onClick={callHuman} disabled={aiTyping}>
+                担当者に相談する
+              </button>
+            )
+          )}
           <form style={styles.form} onSubmit={submit}>
             <textarea
               style={styles.input}

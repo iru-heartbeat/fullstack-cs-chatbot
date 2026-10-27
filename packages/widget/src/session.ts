@@ -21,10 +21,10 @@ export async function ensureAnonymousSession(client: SupabaseClient): Promise<st
 // 完了・AI 解決済みの会話は再開しない（書き込んでも誰にも届かないため。新しい会話を作る）
 export async function loadLatestConversation(
   client: SupabaseClient,
-): Promise<{ conversationId: string; messages: ChatMessage[] } | null> {
+): Promise<{ conversationId: string; status: string; messages: ChatMessage[] } | null> {
   const { data: conv, error } = await client
     .from("conversations")
-    .select("id")
+    .select("id, status")
     .not("status", "in", "(closed,resolved_by_ai)")
     .order("created_at", { ascending: false })
     .limit(1)
@@ -37,7 +37,7 @@ export async function loadLatestConversation(
     .eq("conversation_id", conv.id)
     .order("created_at", { ascending: true });
   if (mErr) throw mErr;
-  return { conversationId: conv.id, messages: (msgs ?? []) as ChatMessage[] };
+  return { conversationId: conv.id, status: conv.status, messages: (msgs ?? []) as ChatMessage[] };
 }
 
 // 会話は最初のメッセージ送信時に作る（空の会話を作らないため）
@@ -83,4 +83,23 @@ export async function requestAiReply(
   if (!res.ok) throw new Error(`ai-reply failed: ${res.status}`);
   const json = (await res.json()) as { message?: ChatMessage; escalate?: boolean };
   return { message: json.message ?? null, escalate: json.escalate ?? false };
+}
+
+// W-07: 顧客自身が人間対応を依頼する。サーバーが会話を escalated にしてお知らせを保存する。
+export async function requestHumanSupport(
+  client: SupabaseClient,
+  apiBaseUrl: string,
+  conversationId: string,
+): Promise<ChatMessage | null> {
+  const { data } = await client.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("no session");
+  const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/api/escalate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ conversationId }),
+  });
+  if (!res.ok) throw new Error(`escalate failed: ${res.status}`);
+  const json = (await res.json()) as { message?: ChatMessage | null };
+  return json.message ?? null;
 }
