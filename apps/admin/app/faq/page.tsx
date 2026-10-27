@@ -3,6 +3,12 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { toggleFaq } from "./actions";
 
+const ERROR_MESSAGE: Record<string, string> = {
+  toggle: "有効/無効の切り替えに失敗しました。もう一度お試しください。",
+  delete: "削除に失敗しました。もう一度お試しください。",
+  notfound: "対象の FAQ が見つかりません（他の人が削除した可能性があります）。",
+};
+
 async function List() {
   const supabase = await createClient();
   const { data: faqs, error } = await supabase
@@ -44,12 +50,25 @@ async function List() {
   );
 }
 
-export default function FaqPage() {
+async function ErrorNotice({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
+  const code = (await searchParams).error;
+  const message = typeof code === "string" ? ERROR_MESSAGE[code] : undefined;
+  return message ? <p role="alert" style={{ color: "crimson" }}>{message}</p> : null;
+}
+
+export default function FaqPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   return (
     <main style={{ margin: "2rem auto", maxWidth: 960, padding: "0 1rem" }}>
       <p><Link href="/">← トップ</Link></p>
       <h1>FAQ 管理</h1>
       <p><Link href="/faq/new">新規登録</Link></p>
+      <Suspense>
+        <ErrorNotice searchParams={searchParams} />
+      </Suspense>
       <Suspense fallback={<p>読み込み中…</p>}>
         <List />
       </Suspense>

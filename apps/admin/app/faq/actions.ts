@@ -7,17 +7,18 @@ import { isUuid, parseFaqForm } from "@/lib/faq";
 
 export type FaqFormState = { error: string } | null;
 
-// Server Action はブラウザから直接呼べるので、画面側のログイン確認に頼らず毎回ここで確認する
+// Server Action はブラウザから直接呼べるので、画面側のログイン確認に頼らず毎回ここで確認する。
+// 権限がなければログイン画面へ送る（例外を投げると本番では内容のない汎用エラー画面になる）
 async function requireOperator() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("ログインが必要です");
+  if (!user) redirect("/login");
   const { data: op } = await supabase
     .from("operators")
     .select("id")
     .eq("id", user.id)
     .maybeSingle();
-  if (!op) throw new Error("オペレーター権限がありません");
+  if (!op) redirect("/login");
   return supabase;
 }
 
@@ -58,24 +59,32 @@ export async function updateFaq(
   redirect("/faq");
 }
 
+// 切り替え・削除は一覧画面の <form> から呼ばれる。失敗しても例外は投げず、
+// 一覧に ?error=… を付けて戻し、画面でメッセージを出す。
 export async function toggleFaq(formData: FormData) {
   const supabase = await requireOperator();
   const id = String(formData.get("id") ?? "");
-  if (!isUuid(id)) throw new Error("不正な ID です");
+  if (!isUuid(id)) redirect("/faq?error=notfound");
   const next = formData.get("next") === "true";
 
-  const { error } = await supabase.from("faq").update({ is_active: next }).eq("id", id);
-  if (error) throw new Error("切り替えに失敗しました");
+  const { data, error } = await supabase
+    .from("faq")
+    .update({ is_active: next })
+    .eq("id", id)
+    .select("id");
+  if (error) redirect("/faq?error=toggle");
+  if (!data?.length) redirect("/faq?error=notfound"); // 他のオペレーターが先に削除した
   revalidatePath("/faq");
 }
 
 export async function deleteFaq(formData: FormData) {
   const supabase = await requireOperator();
   const id = String(formData.get("id") ?? "");
-  if (!isUuid(id)) throw new Error("不正な ID です");
+  if (!isUuid(id)) redirect("/faq?error=notfound");
 
-  const { error } = await supabase.from("faq").delete().eq("id", id);
-  if (error) throw new Error("削除に失敗しました");
+  const { data, error } = await supabase.from("faq").delete().eq("id", id).select("id");
+  if (error) redirect("/faq?error=delete");
+  if (!data?.length) redirect("/faq?error=notfound");
   revalidatePath("/faq");
   redirect("/faq");
 }
