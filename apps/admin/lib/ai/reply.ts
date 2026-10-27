@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { CATEGORIES, type Category } from "./categories.ts";
+import { hasUngroundedContact } from "./guard.ts";
 
 export type Faq = { id: string; category: string | null; question: string; answer: string };
 export type HistoryItem = { role: "user" | "assistant"; content: string };
@@ -19,7 +20,7 @@ const ReplySchema = z.object({
 
 export type AiReply =
   | { kind: "answer"; text: string; usedFaqIds: string[]; category: Category }
-  | { kind: "escalate"; reason: "no_basis" | "forced"; category: Category }
+  | { kind: "escalate"; reason: "no_basis" | "forced" | "unsafe_output"; category: Category }
   | { kind: "escalate"; reason: "ai_error"; category: null };
 
 const SYSTEM_RULES = `あなたはECサイトのカスタマーサポートAIです。次のルールを必ず守ってください。
@@ -70,10 +71,18 @@ export async function generateReply(faqs: Faq[], history: HistoryItem[]): Promis
     if (!out.can_answer || !text) return { kind: "escalate", reason: "no_basis", category: out.category };
 
     const validIds = new Set(faqs.map((f) => f.id));
+    const usedFaqIds = out.used_faq_ids.filter((id) => validIds.has(id));
+    // 根拠の FAQ が無い返信、根拠に無い URL・メール・電話を含む返信は送らない（プロンプトを破られた場合の保険）
+    if (!usedFaqIds.length) return { kind: "escalate", reason: "no_basis", category: out.category };
+    const usedAnswers = faqs.filter((f) => usedFaqIds.includes(f.id)).map((f) => f.answer);
+    if (hasUngroundedContact(text, usedAnswers)) {
+      console.warn("[ai-reply] blocked ungrounded contact in answer");
+      return { kind: "escalate", reason: "unsafe_output", category: out.category };
+    }
     return {
       kind: "answer",
       text: text.slice(0, 1000), // messages.body の check 制約（1〜1000文字）
-      usedFaqIds: out.used_faq_ids.filter((id) => validIds.has(id)),
+      usedFaqIds,
       category: out.category,
     };
   } catch (e) {
