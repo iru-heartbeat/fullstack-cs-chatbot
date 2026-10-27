@@ -4,6 +4,7 @@ import {
   createWidgetClient,
   ensureAnonymousSession,
   loadLatestConversation,
+  requestAiReply,
   sendCustomerMessage,
 } from "./session";
 import type { ChatMessage, SenderType } from "./types";
@@ -11,6 +12,8 @@ import type { ChatMessage, SenderType } from "./types";
 export interface ChatWidgetProps {
   supabaseUrl: string;
   supabaseAnonKey: string;
+  /** AI 返信 API を持つ管理画面アプリの URL（例: https://admin.example.com） */
+  apiBaseUrl: string;
 }
 
 const MAX_LENGTH = 1000; // messages.body の check 制約に合わせる
@@ -69,7 +72,7 @@ function Bubble({ m }: { m: ChatMessage }) {
   );
 }
 
-export function ChatWidget({ supabaseUrl, supabaseAnonKey }: ChatWidgetProps) {
+export function ChatWidget({ supabaseUrl, supabaseAnonKey, apiBaseUrl }: ChatWidgetProps) {
   const client = useMemo(() => createWidgetClient(supabaseUrl, supabaseAnonKey), [supabaseUrl, supabaseAnonKey]);
   const [open, setOpen] = useState(false); // W-02
   const [customerId, setCustomerId] = useState<string | null>(null);
@@ -77,6 +80,7 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey }: ChatWidgetProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [aiTyping, setAiTyping] = useState(false); // W-05
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -117,14 +121,25 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey }: ChatWidgetProps) {
       const sent = await sendCustomerMessage(client, cid, body);
       setMessages((prev) => [...prev, sent]);
       setText("");
+      setSending(false);
+      // AI 返信を依頼（失敗時はサーバーがお詫びを保存するが、通信自体の失敗は画面に出す）
+      setAiTyping(true);
+      try {
+        const { message } = await requestAiReply(client, apiBaseUrl, cid);
+        if (message) setMessages((prev) => [...prev, message]);
+      } catch {
+        setError("AI の応答を取得できませんでした。時間をおいて再度お試しください。");
+      } finally {
+        setAiTyping(false);
+      }
     } catch {
       setError("送信に失敗しました。もう一度お試しください。");
     } finally {
       setSending(false);
     }
-  }, [text, sending, customerId, conversationId, client]);
+  }, [text, sending, customerId, conversationId, client, apiBaseUrl]);
 
-  const disabled = !customerId || sending || !text.trim();
+  const disabled = !customerId || sending || aiTyping || !text.trim();
 
   return (
     <>
@@ -142,6 +157,9 @@ export function ChatWidget({ supabaseUrl, supabaseAnonKey }: ChatWidgetProps) {
               </div>
             )}
             {messages.map((m) => <Bubble key={m.id} m={m} />)}
+            {aiTyping && (
+              <div style={{ color: "#6b7280", fontSize: 12 }} aria-live="polite">AI が入力中…</div>
+            )}
             <div ref={bottomRef} />
           </div>
           {error && <div style={styles.error} role="alert">{error}</div>}
