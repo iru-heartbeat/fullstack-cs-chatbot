@@ -33,11 +33,15 @@ const SYSTEM_RULES = `あなたはECサイトのカスタマーサポートAIで
 - category は、会話の最初の顧客メッセージの内容を次のいずれか1つに分類します（FAQ に答えがなくても分類します）: ${CATEGORIES.join("／")}。
 - answer は800文字以内にします。`;
 
+// FAQ の文面に < や " が含まれても <faq> の構造を壊さないようエスケープする
+const esc = (v: string) =>
+  v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
 function buildSystem(faqs: Faq[]): string {
   const items = faqs
     .map(
       (f) =>
-        `<item id="${f.id}" category="${f.category ?? ""}"><q>${f.question}</q><a>${f.answer}</a></item>`,
+        `<item id="${esc(f.id)}" category="${esc(f.category ?? "")}"><q>${esc(f.question)}</q><a>${esc(f.answer)}</a></item>`,
     )
     .join("\n");
   return `${SYSTEM_RULES}\n\n<faq>\n${items}\n</faq>`;

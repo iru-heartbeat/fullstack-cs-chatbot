@@ -10,14 +10,14 @@ const APOLOGY = "申し訳ございません。ただいまAIが回答できな�
 const HANDOFF = "こちらの内容は担当者が確認してご案内します。しばらくお待ちください。";
 const AFTER_HOURS_SUFFIX = "\n現在は営業時間外のため、担当者の回答は翌営業日になります。";
 
-export function OPTIONS() {
-  return preflight();
+export function OPTIONS(request: Request) {
+  return preflight(request);
 }
 
 export async function POST(request: Request) {
   const conv = await authenticateCustomer(request);
   if (conv instanceof Response) return conv;
-  if (conv.status !== "ai_handling") return json({ skipped: true, escalate: false });
+  if (conv.status !== "ai_handling") return json(request, { skipped: true, escalate: false });
 
   // 以降は service role（サーバー側のみ）で FAQ と履歴を読み、返信を書き込む
   const admin = createAdminClient();
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     }));
   while (history.length && history[0].role !== "user") history.shift();
   if (!history.length || history[history.length - 1].role !== "user") {
-    return json({ error: "no_customer_message" }, 409);
+    return json(request, { error: "no_customer_message" }, 409);
   }
 
   const reply = await generateReply(faqs ?? [], history);
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
     .single();
   if (error) {
     console.error("[ai-reply] insert failed", error.message);
-    return json({ error: "insert_failed" }, 500);
+    return json(request, { error: "insert_failed" }, 500);
   }
 
   // A-04: 最初の質問のカテゴリを保存。未設定のときだけ書く（オペレーターが直した値を上書きしない）
@@ -81,5 +81,5 @@ export async function POST(request: Request) {
   // A-03, A-09, A-10: 回答不可・危険トピック・API 障害はエスカレーション（ステータスを escalated に）
   const escalate = reply.kind === "escalate";
   if (escalate) await escalateConversation(admin, conv.id, businessStatus);
-  return json({ message, escalate });
+  return json(request, { message, escalate });
 }
