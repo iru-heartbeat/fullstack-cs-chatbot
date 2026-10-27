@@ -40,7 +40,7 @@ export async function POST(request: Request) {
   );
   const { data: conv } = await asCustomer
     .from("conversations")
-    .select("id, status")
+    .select("id, status, category")
     .eq("id", conversationId)
     .maybeSingle();
   if (!conv) return json({ error: "not_found" }, 404);
@@ -86,6 +86,16 @@ export async function POST(request: Request) {
   if (error) {
     console.error("[ai-reply] insert failed", error.message);
     return json({ error: "insert_failed" }, 500);
+  }
+
+  // A-04: 最初の質問のカテゴリを保存。未設定のときだけ書く（オペレーターが直した値を上書きしない）
+  if (reply.category && !conv.category) {
+    const { error: catError } = await admin
+      .from("conversations")
+      .update({ category: reply.category })
+      .eq("id", conversationId)
+      .is("category", null);
+    if (catError) console.error("[ai-reply] category update failed", catError.message);
   }
 
   // 会話ステータスの変更（escalated / queued）は escalation 機能で行う。ここでは判定だけ返す
