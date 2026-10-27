@@ -1,12 +1,14 @@
 import { authenticateCustomer, json, preflight } from "@/lib/api/customer";
 import { escalateConversation } from "@/lib/escalation";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getCurrentBusinessStatus } from "@/lib/business-hours";
 import { generateReply, type HistoryItem } from "@/lib/ai/reply";
 
 const HISTORY_LIMIT = 10; // A-05
 
 const APOLOGY = "申し訳ございません。ただいまAIが回答できないため、担当者におつなぎします。";
 const HANDOFF = "こちらの内容は担当者が確認してご案内します。しばらくお待ちください。";
+const AFTER_HOURS_SUFFIX = "\n現在は営業時間外のため、担当者の回答は翌営業日になります。";
 
 export function OPTIONS() {
   return preflight();
@@ -44,10 +46,17 @@ export async function POST(request: Request) {
 
   const reply = await generateReply(faqs ?? [], history);
 
+  // エスカレーション時は、お知らせ文とステータスで同じ営業判定を使う（H-03）
+  const businessStatus = reply.kind === "escalate" ? await getCurrentBusinessStatus(admin) : undefined;
+
   const row =
     reply.kind === "answer"
       ? { sender_type: "ai", body: reply.text, used_faq_ids: reply.usedFaqIds }
-      : { sender_type: "system", body: reply.reason === "ai_error" ? APOLOGY : HANDOFF, used_faq_ids: [] };
+      : {
+          sender_type: "system",
+          body: (reply.reason === "ai_error" ? APOLOGY : HANDOFF) + (businessStatus?.isOpen === false ? AFTER_HOURS_SUFFIX : ""),
+          used_faq_ids: [],
+        };
 
   const { data: message, error } = await admin
     .from("messages")
@@ -71,6 +80,6 @@ export async function POST(request: Request) {
 
   // A-03, A-09, A-10: 回答不可・危険トピック・API 障害はエスカレーション（ステータスを escalated に）
   const escalate = reply.kind === "escalate";
-  if (escalate) await escalateConversation(admin, conv.id);
+  if (escalate) await escalateConversation(admin, conv.id, businessStatus);
   return json({ message, escalate });
 }

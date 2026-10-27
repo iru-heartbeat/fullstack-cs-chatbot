@@ -3,6 +3,8 @@ import { escalateConversation } from "@/lib/escalation";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const NOTICE = "担当者におつなぎします。しばらくお待ちください。";
+const NOTICE_AFTER_HOURS =
+  "現在は営業時間外です。担当者の回答は翌営業日になります。AI でお答えできる内容はこのままご質問ください。";
 
 export function OPTIONS() {
   return preflight();
@@ -15,11 +17,12 @@ export async function POST(request: Request) {
   if (conv.status !== "ai_handling") return json({ skipped: true, message: null });
 
   const admin = createAdminClient();
-  if (!(await escalateConversation(admin, conv.id))) return json({ skipped: true, message: null });
+  const result = await escalateConversation(admin, conv.id);
+  if (!result) return json({ skipped: true, message: null });
 
   const { data: message, error } = await admin
     .from("messages")
-    .insert({ conversation_id: conv.id, sender_type: "system", body: NOTICE })
+    .insert({ conversation_id: conv.id, sender_type: "system", body: result === "queued" ? NOTICE_AFTER_HOURS : NOTICE })
     .select("id, conversation_id, sender_type, body, created_at")
     .single();
   if (error) console.error("[escalate] notice insert failed", error.message);

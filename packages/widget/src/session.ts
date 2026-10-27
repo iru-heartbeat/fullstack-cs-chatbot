@@ -103,3 +103,16 @@ export async function requestHumanSupport(
   const json = (await res.json()) as { message?: ChatMessage | null };
   return json.message ?? null;
 }
+
+// W-08: サーバーで判定した営業状況を取得する（認証不要）。失敗時は null（案内を出さないだけ）。
+export async function fetchBusinessStatus(
+  apiBaseUrl: string,
+): Promise<{ isOpen: boolean; nextOpenAt: string | null } | null> {
+  try {
+    const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/api/business-hours`);
+    if (!res.ok) return null;
+    return (await res.json()) as { isOpen: boolean; nextOpenAt: string | null };
+  } catch {
+    return null;
+  }
+}
