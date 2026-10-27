@@ -1,0 +1,64 @@
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { ChatMessage } from "./types";
+
+// ブラウザ側では anon キーのみ使う（service role キーは絶対に渡さない）
+export function createWidgetClient(url: string, anonKey: string): SupabaseClient {
+  return createClient(url, anonKey, {
+    auth: { persistSession: true, autoRefreshToken: true, storageKey: "cs-widget-auth" },
+  });
+}
+
+// W-09: 既存セッション（localStorage に保存）があれば再利用し、なければ匿名サインインする
+export async function ensureAnonymousSession(client: SupabaseClient): Promise<string> {
+  const { data } = await client.auth.getSession();
+  if (data.session) return data.session.user.id;
+  const { data: signedIn, error } = await client.auth.signInAnonymously();
+  if (error || !signedIn.user) throw error ?? new Error("anonymous sign-in failed");
+  return signedIn.user.id;
+}
+
+// 自分の最新の会話とそのメッセージを取得（RLS により自分の会話しか返らない）
+export async function loadLatestConversation(
+  client: SupabaseClient,
+): Promise<{ conversationId: string; messages: ChatMessage[] } | null> {
+  const { data: conv, error } = await client
+    .from("conversations")
+    .select("id")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  if (!conv) return null;
+  const { data: msgs, error: mErr } = await client
+    .from("messages")
+    .select("id, conversation_id, sender_type, body, created_at")
+    .eq("conversation_id", conv.id)
+    .order("created_at", { ascending: true });
+  if (mErr) throw mErr;
+  return { conversationId: conv.id, messages: (msgs ?? []) as ChatMessage[] };
+}
+
+// 会話は最初のメッセージ送信時に作る（空の会話を作らないため）
+export async function createConversation(client: SupabaseClient, customerId: string): Promise<string> {
+  const { data, error } = await client
+    .from("conversations")
+    .insert({ customer_id: customerId })
+    .select("id")
+    .single();
+  if (error) throw error;
+  return data.id;
+}
+
+export async function sendCustomerMessage(
+  client: SupabaseClient,
+  conversationId: string,
+  body: string,
+): Promise<ChatMessage> {
+  const { data, error } = await client
+    .from("messages")
+    .insert({ conversation_id: conversationId, sender_type: "customer", body })
+    .select("id, conversation_id, sender_type, body, created_at")
+    .single();
+  if (error) throw error;
+  return data as ChatMessage;
+}
