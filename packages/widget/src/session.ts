@@ -64,3 +64,23 @@ export async function sendCustomerMessage(
   if (error) throw error;
   return data as ChatMessage;
 }
+
+// A-01〜A-10: サーバー（管理画面アプリの API）に AI 返信を依頼する。
+// 認証は匿名セッションのアクセストークン。AI 返信は DB に保存され、そのメッセージが返る。
+export async function requestAiReply(
+  client: SupabaseClient,
+  apiBaseUrl: string,
+  conversationId: string,
+): Promise<{ message: ChatMessage | null; escalate: boolean }> {
+  const { data } = await client.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("no session");
+  const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/api/ai-reply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ conversationId }),
+  });
+  if (!res.ok) throw new Error(`ai-reply failed: ${res.status}`);
+  const json = (await res.json()) as { message?: ChatMessage; escalate?: boolean };
+  return { message: json.message ?? null, escalate: json.escalate ?? false };
+}
